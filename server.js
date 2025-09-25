@@ -41,6 +41,24 @@ const alertSchema = new mongoose.Schema({
 });
 const Alert = mongoose.model("Alert", alertSchema);
 
+// 👇 MIDDLEWARE DE AUTENTICACIÓN (AGREGAR ESTO)
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token de acceso requerido' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: 'Token inválido o expirado' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
 // Rutas de Autenticación
 // REGISTER
 app.post("/auth/register", async (req, res) => {
@@ -97,6 +115,26 @@ app.post("/auth/login", async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: "Error en el login", error });
+  }
+});
+
+// 👇 RUTA PARA OBTENER USUARIO ACTUAL (AGREGAR ESTO)
+app.get("/api/users/me", authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+
+    res.json({
+      id: user._id,
+      email: user.email,
+      name: user.name || "Usuario",
+      lastname: user.lastname || "",
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener usuario", error });
   }
 });
 
