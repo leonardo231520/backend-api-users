@@ -19,10 +19,12 @@ mongoose
   .then(() => console.log("✅ MongoDB conectado"))
   .catch((err) => console.error("❌ Error MongoDB:", err));
 
-// Esquema y modelo de User
+// 👇 ESQUEMA DE USER ACTUALIZADO (AGREGAR CAMPOS NAME Y LASTNAME)
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
+  name: { type: String, default: "" },     // 👈 NUEVO CAMPO
+  lastname: { type: String, default: "" }  // 👈 NUEVO CAMPO
 });
 const User = mongoose.model("User", userSchema);
 
@@ -60,10 +62,10 @@ const authenticateToken = (req, res, next) => {
 };
 
 // Rutas de Autenticación
-// REGISTER
+// REGISTER ACTUALIZADO PARA ACEPTAR NAME Y LASTNAME
 app.post("/auth/register", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, name, lastname } = req.body; // 👈 AGREGAR NAME Y LASTNAME
 
     // Verificar si el usuario ya existe
     const existingUser = await User.findOne({ email });
@@ -77,6 +79,8 @@ app.post("/auth/register", async (req, res) => {
     const newUser = new User({
       email,
       password: hashedPassword,
+      name: name || "",        // 👈 GUARDAR NAME
+      lastname: lastname || "" // 👈 GUARDAR LASTNAME
     });
 
     await newUser.save();
@@ -87,7 +91,7 @@ app.post("/auth/register", async (req, res) => {
   }
 });
 
-// LOGIN
+// LOGIN ACTUALIZADO PARA DEVOLVER NAME Y LASTNAME
 app.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -111,14 +115,19 @@ app.post("/auth/login", async (req, res) => {
 
     res.json({
       token,
-      user: { id: user._id, email: user.email },
+      user: { 
+        id: user._id, 
+        email: user.email,
+        name: user.name,        // 👈 DEVOLVER NAME REAL
+        lastname: user.lastname // 👈 DEVOLVER LASTNAME REAL
+      },
     });
   } catch (error) {
     res.status(500).json({ message: "Error en el login", error });
   }
 });
 
-// 👇 RUTA PARA OBTENER USUARIO ACTUAL (AGREGAR ESTO)
+// 👇 RUTA PARA OBTENER USUARIO ACTUAL (MEJORADA)
 app.get("/api/users/me", authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
@@ -127,14 +136,48 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
-    res.json({
+    // 👇 FILTRAR Y DEVOLVER SOLO LOS DATOS REALES DE LA BD
+    const userData = {
       id: user._id,
       email: user.email,
-      name: user.name || "Usuario",
-      lastname: user.lastname || "",
+      // Si name existe en la BD, usarlo; si no, dejar string vacío
+      name: user.name || "",
+      // Si lastname existe en la BD, usarlo; si no, dejar string vacío
+      lastname: user.lastname || ""
+    };
+
+    // 👇 VERIFICAR SI HAY DATOS EN LA BD
+    console.log("📊 Datos del usuario desde BD:", {
+      email: user.email,
+      name: user.name,
+      lastname: user.lastname,
+      tieneNombre: !!user.name,
+      tieneApellido: !!user.lastname
     });
+
+    res.json(userData);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener usuario", error });
+  }
+});
+
+// 👇 RUTA OPCIONAL: ACTUALIZAR DATOS DEL USUARIO
+app.put("/api/users/profile", authenticateToken, async (req, res) => {
+  try {
+    const { name, lastname } = req.body;
+    
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user.id,
+      { name, lastname },
+      { new: true }
+    ).select('-password');
+
+    res.json({
+      message: "Perfil actualizado exitosamente",
+      user: updatedUser
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error al actualizar perfil", error });
   }
 });
 
@@ -210,3 +253,19 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () =>
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`)
 );
+
+// 👇 SCRIPT PARA ACTUALIZAR USUARIOS EXISTENTES (EJECUTAR UNA SOLA VEZ)
+const updateExistingUsers = async () => {
+  try {
+    const result = await User.updateMany(
+      { name: { $exists: false } }, // Solo usuarios sin campo name
+      { $set: { name: "", lastname: "" } } // Agregar campos vacíos
+    );
+    console.log(`✅ Usuarios actualizados: ${result.modifiedCount}`);
+  } catch (error) {
+    console.error("❌ Error actualizando usuarios:", error);
+  }
+};
+
+// Ejecutar al iniciar el servidor (opcional)
+updateExistingUsers();
