@@ -228,24 +228,34 @@ app.get("/api/sensors", async (req, res) => {
   }
 });
 
-// Obtener lista de alertas
-app.get("/api/alerts", async (req, res) => {
+// ✅ Nueva versión: devuelve lista de sensores recientes
+app.get("/api/sensors", async (req, res) => {
   try {
-    const alerts = await Alert.find()
-      .sort({ timestamp: -1 })
-      .limit(50)
-      .select("message timestamp");
-    res.json(
-      alerts.map((alert) => ({
-        id: alert._id.toString(),
-        message: alert.message,
-        timestamp: alert.timestamp.toISOString(),
-      }))
-    );
+    const sensors = await Sensor.find().sort({ timestamp: -1 }).limit(50);
+    if (!sensors.length) {
+      return res.status(404).json({ message: "No se encontraron datos de sensores" });
+    }
+
+    // Normalizamos para el frontend
+    const formatted = sensors.map(s => ({
+      id: s._id.toString(),
+      flame: s.flame,
+      gas: s.gas,
+      timestamp: s.timestamp,
+      status:
+        s.gas > 70 || s.flame > 65
+          ? "danger"
+          : s.gas > 40 || s.flame > 40
+          ? "warning"
+          : "normal",
+    }));
+
+    res.json(formatted);
   } catch (error) {
-    res.status(500).json({ message: "Error al obtener alertas", error });
+    res.status(500).json({ message: "Error al obtener datos de sensores", error });
   }
 });
+
 
 // Ruta para agregar datos de sensores (para pruebas)
 app.post("/api/sensors", async (req, res) => {
