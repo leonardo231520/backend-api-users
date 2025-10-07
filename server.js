@@ -274,6 +274,50 @@ app.get("/api/admin/users", authenticateToken, verifyAdmin, async (req, res) => 
 });
 
 // ==========================================
+// 📊 NUEVAS RUTAS PARA DASHBOARD Y ALERTAS
+// ==========================================
+app.get("/api/dashboard/summary", async (req, res) => {
+  try {
+    const totalSensores = await Sensor.countDocuments();
+    const totalAlertas = await Alert.countDocuments();
+
+    const ultimo = await Sensor.findOne().sort({ timestamp: -1 });
+    const promedioFlame = await Sensor.aggregate([{ $group: { _id: null, avg: { $avg: "$flame" } } }]);
+    const promedioGas = await Sensor.aggregate([{ $group: { _id: null, avg: { $avg: "$gas" } } }]);
+
+    res.json({
+      totalSensores,
+      totalAlertas,
+      ultimo: ultimo || null,
+      promedioFlame: promedioFlame[0]?.avg || 0,
+      promedioGas: promedioGas[0]?.avg || 0,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener resumen", error });
+  }
+});
+
+app.get("/api/alerts/recent", async (req, res) => {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentAlerts = await Alert.find({ timestamp: { $gte: sevenDaysAgo } }).sort({ timestamp: -1 });
+    res.json(recentAlerts);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener alertas recientes", error });
+  }
+});
+
+app.delete("/api/alerts/cleanup", async (req, res) => {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const result = await Alert.deleteMany({ timestamp: { $lt: thirtyDaysAgo } });
+    res.json({ message: "Alertas antiguas eliminadas", eliminadas: result.deletedCount });
+  } catch (error) {
+    res.status(500).json({ message: "Error al limpiar alertas", error });
+  }
+});
+
+// ==========================================
 // 🚀 SERVIDOR
 // ==========================================
 const PORT = process.env.PORT || 4000;
