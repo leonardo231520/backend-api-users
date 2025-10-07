@@ -30,7 +30,7 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   name: { type: String, default: "" },
   lastname: { type: String, default: "" },
-  role: { type: String, enum: ["admin", "user"], default: "user" }, // 👈 NUEVO
+  role: { type: String, enum: ["admin", "user"], default: "user" },
   lastLogin: { type: Date, default: Date.now },
 });
 const User = mongoose.model("User", userSchema);
@@ -43,9 +43,11 @@ const sensorSchema = new mongoose.Schema({
 });
 const Sensor = mongoose.model("Sensor", sensorSchema);
 
-// 🚨 ALERTAS
+// 🚨 ALERTAS (actualizado con gas, flame y timestamp)
 const alertSchema = new mongoose.Schema({
   message: { type: String, required: true },
+  flame: { type: Number, default: 0 },
+  gas: { type: Number, default: 0 },
   timestamp: { type: Date, default: Date.now },
 });
 const Alert = mongoose.model("Alert", alertSchema);
@@ -53,7 +55,6 @@ const Alert = mongoose.model("Alert", alertSchema);
 // ==========================================
 // 🧩 MIDDLEWARES
 // ==========================================
-
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -66,7 +67,6 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Solo para administradores 👇
 const verifyAdmin = (req, res, next) => {
   if (req.user.role !== "admin") {
     return res.status(403).json({ message: "Acceso denegado: solo administradores" });
@@ -77,8 +77,6 @@ const verifyAdmin = (req, res, next) => {
 // ==========================================
 // 🔐 AUTENTICACIÓN
 // ==========================================
-
-// Registro
 app.post("/auth/register", async (req, res) => {
   try {
     const { email, password, name, lastname, role } = req.body;
@@ -92,7 +90,7 @@ app.post("/auth/register", async (req, res) => {
       password: hashedPassword,
       name: name || "",
       lastname: lastname || "",
-      role: role || "user", // 👈 permite registrar admin o usuario
+      role: role || "user",
       lastLogin: new Date(),
     });
 
@@ -103,7 +101,6 @@ app.post("/auth/register", async (req, res) => {
   }
 });
 
-// Login
 app.post("/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -116,7 +113,7 @@ app.post("/auth/login", async (req, res) => {
     await User.findByIdAndUpdate(user._id, { lastLogin: new Date() });
 
     const token = jwt.sign(
-      { id: user._id, role: user.role }, // 👈 incluye el rol
+      { id: user._id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
@@ -128,7 +125,7 @@ app.post("/auth/login", async (req, res) => {
         email: user.email,
         name: user.name,
         lastname: user.lastname,
-        role: user.role, // 👈 nuevo campo
+        role: user.role,
       },
     });
   } catch (error) {
@@ -136,7 +133,6 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
-// Usuario actual
 app.get("/api/users/me", authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -147,7 +143,6 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
   }
 });
 
-// Usuarios conectados (últimos 10 min)
 app.get("/api/users/connected", authenticateToken, async (req, res) => {
   try {
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
@@ -174,7 +169,6 @@ app.get("/api/users/connected", authenticateToken, async (req, res) => {
   }
 });
 
-// Mantener sesión activa
 app.post("/api/users/keep-alive", authenticateToken, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { lastLogin: new Date() });
@@ -184,7 +178,6 @@ app.post("/api/users/keep-alive", authenticateToken, async (req, res) => {
   }
 });
 
-// Actualizar perfil
 app.put("/api/users/profile", authenticateToken, async (req, res) => {
   try {
     const { name, lastname } = req.body;
@@ -204,7 +197,7 @@ app.put("/api/users/profile", authenticateToken, async (req, res) => {
 // 📡 RUTAS DE SENSORES Y ALERTAS
 // ==========================================
 
-// Obtener últimos sensores
+// 🔹 Obtener últimos sensores
 app.get("/api/sensors", async (req, res) => {
   try {
     const sensors = await Sensor.find().sort({ timestamp: -1 }).limit(50);
@@ -230,30 +223,39 @@ app.get("/api/sensors", async (req, res) => {
   }
 });
 
-// Agregar sensor (para pruebas o Wokwi)
+// 🔹 Agregar sensor con generación automática de alertas
 app.post("/api/sensors", async (req, res) => {
   try {
     const { flame, gas } = req.body;
     if (typeof flame !== "number" || typeof gas !== "number") {
       return res.status(400).json({ message: "flame y gas deben ser números" });
     }
+
     const newSensor = new Sensor({ flame, gas });
     await newSensor.save();
+
+    // Condición de alerta
+    if (gas > 70 || flame > 65) {
+      const alertMessage = "⚠️ Nivel de peligro detectado";
+      const newAlert = new Alert({ message: alertMessage, flame, gas });
+      await newAlert.save();
+    }
+
     res.status(201).json({ message: "Sensor guardado correctamente" });
   } catch (error) {
     res.status(500).json({ message: "Error al guardar sensor", error });
   }
 });
 
-// Agregar alerta (opcional)
+// 🔹 Agregar alerta manual (opcional)
 app.post("/api/alerts", async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, flame, gas } = req.body;
     if (!message) return res.status(400).json({ message: "El mensaje es requerido" });
 
-    const newAlert = new Alert({ message });
+    const newAlert = new Alert({ message, flame, gas });
     await newAlert.save();
-    res.status(201).json({ message: "Alerta guardada" });
+    res.status(201).json({ message: "Alerta guardada", alert: newAlert });
   } catch (error) {
     res.status(500).json({ message: "Error al guardar alerta", error });
   }
@@ -262,8 +264,6 @@ app.post("/api/alerts", async (req, res) => {
 // ==========================================
 // 🧭 RUTAS ADMINISTRADORAS
 // ==========================================
-
-// Ver todos los usuarios (solo admin)
 app.get("/api/admin/users", authenticateToken, verifyAdmin, async (req, res) => {
   try {
     const users = await User.find().select("-password");
