@@ -261,6 +261,16 @@ app.post("/api/alerts", async (req, res) => {
   }
 });
 
+// 🔸 NUEVA RUTA para que el dashboard lea alertas (NO TOQUES LAS OTRAS)
+app.get("/api/alerts", async (req, res) => {
+  try {
+    const alerts = await Alert.find().sort({ timestamp: -1 });
+    res.json(alerts);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener alertas", error });
+  }
+});
+
 // ==========================================
 // 🧭 RUTAS ADMINISTRADORAS
 // ==========================================
