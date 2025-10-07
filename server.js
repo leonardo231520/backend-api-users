@@ -24,7 +24,7 @@ mongoose
 // 🧱 MODELOS
 // ==========================================
 
-// 🧍 USUARIOS (ahora con ROLE)
+// 🧍 USUARIOS
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -43,7 +43,7 @@ const sensorSchema = new mongoose.Schema({
 });
 const Sensor = mongoose.model("Sensor", sensorSchema);
 
-// 🚨 ALERTAS (actualizado con gas, flame y timestamp)
+// 🚨 ALERTAS
 const alertSchema = new mongoose.Schema({
   message: { type: String, required: true },
   flame: { type: Number, default: 0 },
@@ -51,6 +51,13 @@ const alertSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
 });
 const Alert = mongoose.model("Alert", alertSchema);
+
+// 🟢 ESTADO DEL SISTEMA (para dashboard)
+const systemStateSchema = new mongoose.Schema({
+  active: { type: Boolean, default: false },
+  updatedAt: { type: Date, default: Date.now },
+});
+const SystemState = mongoose.model("SystemState", systemStateSchema);
 
 // ==========================================
 // 🧩 MIDDLEWARES
@@ -196,8 +203,6 @@ app.put("/api/users/profile", authenticateToken, async (req, res) => {
 // ==========================================
 // 📡 RUTAS DE SENSORES Y ALERTAS
 // ==========================================
-
-// 🔹 Obtener últimos sensores
 app.get("/api/sensors", async (req, res) => {
   try {
     const sensors = await Sensor.find().sort({ timestamp: -1 }).limit(50);
@@ -223,7 +228,6 @@ app.get("/api/sensors", async (req, res) => {
   }
 });
 
-// 🔹 Agregar sensor con generación automática de alertas
 app.post("/api/sensors", async (req, res) => {
   try {
     const { flame, gas } = req.body;
@@ -234,7 +238,6 @@ app.post("/api/sensors", async (req, res) => {
     const newSensor = new Sensor({ flame, gas });
     await newSensor.save();
 
-    // Condición de alerta
     if (gas > 70 || flame > 65) {
       const alertMessage = "⚠️ Nivel de peligro detectado";
       const newAlert = new Alert({ message: alertMessage, flame, gas });
@@ -247,7 +250,6 @@ app.post("/api/sensors", async (req, res) => {
   }
 });
 
-// 🔹 Agregar alerta manual (opcional)
 app.post("/api/alerts", async (req, res) => {
   try {
     const { message, flame, gas } = req.body;
@@ -261,7 +263,6 @@ app.post("/api/alerts", async (req, res) => {
   }
 });
 
-// 🔸 NUEVA RUTA para que el dashboard lea alertas (NO TOQUES LAS OTRAS)
 app.get("/api/alerts", async (req, res) => {
   try {
     const alerts = await Alert.find().sort({ timestamp: -1 });
@@ -284,16 +285,25 @@ app.get("/api/admin/users", authenticateToken, verifyAdmin, async (req, res) => 
 });
 
 // ==========================================
-// 📊 NUEVAS RUTAS PARA DASHBOARD Y ALERTAS
+// 📊 DASHBOARD + ACTIVACIÓN SISTEMA
 // ==========================================
 app.get("/api/dashboard/summary", async (req, res) => {
   try {
     const totalSensores = await Sensor.countDocuments();
     const totalAlertas = await Alert.countDocuments();
-
     const ultimo = await Sensor.findOne().sort({ timestamp: -1 });
     const promedioFlame = await Sensor.aggregate([{ $group: { _id: null, avg: { $avg: "$flame" } } }]);
     const promedioGas = await Sensor.aggregate([{ $group: { _id: null, avg: { $avg: "$gas" } } }]);
+
+    // 🔹 Solo activamos sistema cuando se envían datos al dashboard
+    let state = await SystemState.findOne();
+    if (!state) {
+      state = new SystemState({ active: true });
+    } else {
+      state.active = true;
+      state.updatedAt = new Date();
+    }
+    await state.save();
 
     res.json({
       totalSensores,
