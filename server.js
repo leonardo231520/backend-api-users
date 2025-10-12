@@ -23,8 +23,6 @@ mongoose
 // ==========================================
 // 🧱 MODELOS
 // ==========================================
-
-// 🧍 USUARIOS
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -35,7 +33,6 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model("User", userSchema);
 
-// 🔥 SENSORES
 const sensorSchema = new mongoose.Schema({
   flame: { type: Number, required: true },
   gas: { type: Number, required: true },
@@ -43,7 +40,6 @@ const sensorSchema = new mongoose.Schema({
 });
 const Sensor = mongoose.model("Sensor", sensorSchema);
 
-// 🚨 ALERTAS
 const alertSchema = new mongoose.Schema({
   message: { type: String, required: true },
   flame: { type: Number, default: 0 },
@@ -52,7 +48,6 @@ const alertSchema = new mongoose.Schema({
 });
 const Alert = mongoose.model("Alert", alertSchema);
 
-// 🟢 ESTADO DEL SISTEMA (para dashboard)
 const systemStateSchema = new mongoose.Schema({
   active: { type: Boolean, default: false },
   updatedAt: { type: Date, default: Date.now },
@@ -76,7 +71,9 @@ const authenticateToken = (req, res, next) => {
 
 const verifyAdmin = (req, res, next) => {
   if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Acceso denegado: solo administradores" });
+    return res
+      .status(403)
+      .json({ message: "Acceso denegado: solo administradores" });
   }
   next();
 };
@@ -88,7 +85,8 @@ app.post("/auth/register", async (req, res) => {
   try {
     const { email, password, name, lastname, role } = req.body;
     const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ message: "El usuario ya existe" });
+    if (existingUser)
+      return res.status(400).json({ message: "El usuario ya existe" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -115,7 +113,8 @@ app.post("/auth/login", async (req, res) => {
     if (!user) return res.status(400).json({ message: "Usuario no encontrado" });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Contraseña incorrecta" });
+    if (!isMatch)
+      return res.status(400).json({ message: "Contraseña incorrecta" });
 
     await User.findByIdAndUpdate(user._id, { lastLogin: new Date() });
 
@@ -140,6 +139,9 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
+// ==========================================
+// 👤 PERFIL Y CONEXIÓN DE USUARIOS
+// ==========================================
 app.get("/api/users/me", authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -172,7 +174,9 @@ app.get("/api/users/connected", authenticateToken, async (req, res) => {
       }))
     );
   } catch (error) {
-    res.status(500).json({ message: "Error al obtener usuarios conectados", error });
+    res
+      .status(500)
+      .json({ message: "Error al obtener usuarios conectados", error });
   }
 });
 
@@ -201,13 +205,54 @@ app.put("/api/users/profile", authenticateToken, async (req, res) => {
 });
 
 // ==========================================
+// 🆕 NUEVA RUTA: CAMBIO DE ROL
+// ==========================================
+app.put("/api/users/change-role/:id", authenticateToken, verifyAdmin, async (req, res) => {
+  try {
+    const { role } = req.body;
+
+    if (!["admin", "user"].includes(role)) {
+      return res.status(400).json({ message: "Rol inválido" });
+    }
+
+    // Evitar que un admin se quite a sí mismo los permisos
+    if (req.user.id === req.params.id) {
+      return res
+        .status(403)
+        .json({ message: "No puedes cambiar tu propio rol" });
+    }
+
+    const userToUpdate = await User.findById(req.params.id);
+    if (!userToUpdate)
+      return res.status(404).json({ message: "Usuario no encontrado" });
+
+    userToUpdate.role = role;
+    await userToUpdate.save();
+
+    res.json({
+      message: `Rol cambiado correctamente a ${role}`,
+      user: {
+        id: userToUpdate._id,
+        email: userToUpdate.email,
+        name: userToUpdate.name,
+        role: userToUpdate.role,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Error al cambiar rol", error });
+  }
+});
+
+// ==========================================
 // 📡 RUTAS DE SENSORES Y ALERTAS
 // ==========================================
 app.get("/api/sensors", async (req, res) => {
   try {
     const sensors = await Sensor.find().sort({ timestamp: -1 }).limit(50);
     if (!sensors.length)
-      return res.status(404).json({ message: "No se encontraron datos de sensores" });
+      return res
+        .status(404)
+        .json({ message: "No se encontraron datos de sensores" });
 
     const formatted = sensors.map((s) => ({
       id: s._id.toString(),
@@ -232,7 +277,9 @@ app.post("/api/sensors", async (req, res) => {
   try {
     const { flame, gas } = req.body;
     if (typeof flame !== "number" || typeof gas !== "number") {
-      return res.status(400).json({ message: "flame y gas deben ser números" });
+      return res
+        .status(400)
+        .json({ message: "flame y gas deben ser números" });
     }
 
     const newSensor = new Sensor({ flame, gas });
@@ -253,7 +300,8 @@ app.post("/api/sensors", async (req, res) => {
 app.post("/api/alerts", async (req, res) => {
   try {
     const { message, flame, gas } = req.body;
-    if (!message) return res.status(400).json({ message: "El mensaje es requerido" });
+    if (!message)
+      return res.status(400).json({ message: "El mensaje es requerido" });
 
     const newAlert = new Alert({ message, flame, gas });
     await newAlert.save();
@@ -292,10 +340,13 @@ app.get("/api/dashboard/summary", async (req, res) => {
     const totalSensores = await Sensor.countDocuments();
     const totalAlertas = await Alert.countDocuments();
     const ultimo = await Sensor.findOne().sort({ timestamp: -1 });
-    const promedioFlame = await Sensor.aggregate([{ $group: { _id: null, avg: { $avg: "$flame" } } }]);
-    const promedioGas = await Sensor.aggregate([{ $group: { _id: null, avg: { $avg: "$gas" } } }]);
+    const promedioFlame = await Sensor.aggregate([
+      { $group: { _id: null, avg: { $avg: "$flame" } } },
+    ]);
+    const promedioGas = await Sensor.aggregate([
+      { $group: { _id: null, avg: { $avg: "$gas" } } },
+    ]);
 
-    // 🔹 Solo activamos sistema cuando se envían datos al dashboard
     let state = await SystemState.findOne();
     if (!state) {
       state = new SystemState({ active: true });
@@ -317,34 +368,16 @@ app.get("/api/dashboard/summary", async (req, res) => {
   }
 });
 
-app.get("/api/alerts/recent", async (req, res) => {
-  try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const recentAlerts = await Alert.find({ timestamp: { $gte: sevenDaysAgo } }).sort({ timestamp: -1 });
-    res.json(recentAlerts);
-  } catch (error) {
-    res.status(500).json({ message: "Error al obtener alertas recientes", error });
-  }
-});
-
-app.delete("/api/alerts/cleanup", async (req, res) => {
-  try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const result = await Alert.deleteMany({ timestamp: { $lt: thirtyDaysAgo } });
-    res.json({ message: "Alertas antiguas eliminadas", eliminadas: result.deletedCount });
-  } catch (error) {
-    res.status(500).json({ message: "Error al limpiar alertas", error });
-  }
-});
-
 // ==========================================
 // 🚀 SERVIDOR
 // ==========================================
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`)
+);
 
 // ==========================================
-// ⚙️ SCRIPT PARA ACTUALIZAR USUARIOS EXISTENTES
+// ⚙️ ACTUALIZAR USUARIOS EXISTENTES
 // ==========================================
 const updateExistingUsers = async () => {
   try {
@@ -358,7 +391,9 @@ const updateExistingUsers = async () => {
     );
 
     console.log(`✅ Usuarios actualizados - role: ${resultRole.modifiedCount}`);
-    console.log(`✅ Usuarios actualizados - lastLogin: ${resultLogin.modifiedCount}`);
+    console.log(
+      `✅ Usuarios actualizados - lastLogin: ${resultLogin.modifiedCount}`
+    );
   } catch (error) {
     console.error("❌ Error actualizando usuarios:", error);
   }

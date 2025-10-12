@@ -5,9 +5,11 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   name: { type: String, default: "" },
   lastname: { type: String, default: "" },
-  role: { type: String, enum: ["admin", "user"], default: "user" }, // 👈 NUEVO
+  role: { type: String, enum: ["admin", "user"], default: "user" },
   lastLogin: { type: Date, default: Date.now },
+  isOnline: { type: Boolean, default: false }, // 🟢 NUEVO campo de estado
 });
+
 
 const User = mongoose.model("User", userSchema);
 export default User;
