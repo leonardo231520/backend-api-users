@@ -30,6 +30,7 @@ const userSchema = new mongoose.Schema({
   lastname: { type: String, default: "" },
   role: { type: String, enum: ["admin", "user"], default: "user" },
   lastLogin: { type: Date, default: Date.now },
+  isOnline: { type: Boolean, default: false }, // ✅ Nuevo campo agregado
 });
 const User = mongoose.model("User", userSchema);
 
@@ -71,9 +72,7 @@ const authenticateToken = (req, res, next) => {
 
 const verifyAdmin = (req, res, next) => {
   if (req.user.role !== "admin") {
-    return res
-      .status(403)
-      .json({ message: "Acceso denegado: solo administradores" });
+    return res.status(403).json({ message: "Acceso denegado: solo administradores" });
   }
   next();
 };
@@ -97,6 +96,7 @@ app.post("/auth/register", async (req, res) => {
       lastname: lastname || "",
       role: role || "user",
       lastLogin: new Date(),
+      isOnline: false, // Por defecto inactivo
     });
 
     await newUser.save();
@@ -116,7 +116,8 @@ app.post("/auth/login", async (req, res) => {
     if (!isMatch)
       return res.status(400).json({ message: "Contraseña incorrecta" });
 
-    await User.findByIdAndUpdate(user._id, { lastLogin: new Date() });
+    // 🔹 Marcar usuario como activo
+    await User.findByIdAndUpdate(user._id, { lastLogin: new Date(), isOnline: true });
 
     const token = jwt.sign(
       { id: user._id, role: user.role },
@@ -132,10 +133,21 @@ app.post("/auth/login", async (req, res) => {
         name: user.name,
         lastname: user.lastname,
         role: user.role,
+        isOnline: true, // ✅ Indicador de sesión activa
       },
     });
   } catch (error) {
     res.status(500).json({ message: "Error en el login", error });
+  }
+});
+
+// ✅ Cierre de sesión
+app.post("/auth/logout", authenticateToken, async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.user.id, { isOnline: false });
+    res.json({ message: "Sesión cerrada correctamente" });
+  } catch (error) {
+    res.status(500).json({ message: "Error al cerrar sesión", error });
   }
 });
 
@@ -154,11 +166,7 @@ app.get("/api/users/me", authenticateToken, async (req, res) => {
 
 app.get("/api/users/connected", authenticateToken, async (req, res) => {
   try {
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-    const connectedUsers = await User.find({
-      lastLogin: { $gte: tenMinutesAgo },
-      _id: { $ne: req.user.id },
-    })
+    const connectedUsers = await User.find({ isOnline: true })
       .select("-password")
       .limit(20);
 
@@ -170,19 +178,17 @@ app.get("/api/users/connected", authenticateToken, async (req, res) => {
         lastname: user.lastname,
         lastLogin: user.lastLogin,
         role: user.role,
-        isOnline: true,
+        isOnline: user.isOnline,
       }))
     );
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error al obtener usuarios conectados", error });
+    res.status(500).json({ message: "Error al obtener usuarios conectados", error });
   }
 });
 
 app.post("/api/users/keep-alive", authenticateToken, async (req, res) => {
   try {
-    await User.findByIdAndUpdate(req.user.id, { lastLogin: new Date() });
+    await User.findByIdAndUpdate(req.user.id, { lastLogin: new Date(), isOnline: true });
     res.json({ message: "Estado actualizado", timestamp: new Date() });
   } catch (error) {
     res.status(500).json({ message: "Error al actualizar estado", error });
@@ -205,22 +211,16 @@ app.put("/api/users/profile", authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// 🆕 NUEVA RUTA: CAMBIO DE ROL
+// 🆕 CAMBIO DE ROL
 // ==========================================
 app.put("/api/users/change-role/:id", authenticateToken, verifyAdmin, async (req, res) => {
   try {
     const { role } = req.body;
-
-    if (!["admin", "user"].includes(role)) {
+    if (!["admin", "user"].includes(role))
       return res.status(400).json({ message: "Rol inválido" });
-    }
 
-    // Evitar que un admin se quite a sí mismo los permisos
-    if (req.user.id === req.params.id) {
-      return res
-        .status(403)
-        .json({ message: "No puedes cambiar tu propio rol" });
-    }
+    if (req.user.id === req.params.id)
+      return res.status(403).json({ message: "No puedes cambiar tu propio rol" });
 
     const userToUpdate = await User.findById(req.params.id);
     if (!userToUpdate)
@@ -244,15 +244,13 @@ app.put("/api/users/change-role/:id", authenticateToken, verifyAdmin, async (req
 });
 
 // ==========================================
-// 📡 RUTAS DE SENSORES Y ALERTAS
+// 📡 SENSORES Y ALERTAS
 // ==========================================
 app.get("/api/sensors", async (req, res) => {
   try {
     const sensors = await Sensor.find().sort({ timestamp: -1 }).limit(50);
     if (!sensors.length)
-      return res
-        .status(404)
-        .json({ message: "No se encontraron datos de sensores" });
+      return res.status(404).json({ message: "No se encontraron datos de sensores" });
 
     const formatted = sensors.map((s) => ({
       id: s._id.toString(),
@@ -276,11 +274,8 @@ app.get("/api/sensors", async (req, res) => {
 app.post("/api/sensors", async (req, res) => {
   try {
     const { flame, gas } = req.body;
-    if (typeof flame !== "number" || typeof gas !== "number") {
-      return res
-        .status(400)
-        .json({ message: "flame y gas deben ser números" });
-    }
+    if (typeof flame !== "number" || typeof gas !== "number")
+      return res.status(400).json({ message: "flame y gas deben ser números" });
 
     const newSensor = new Sensor({ flame, gas });
     await newSensor.save();
@@ -321,7 +316,7 @@ app.get("/api/alerts", async (req, res) => {
 });
 
 // ==========================================
-// 🧭 RUTAS ADMINISTRADORAS
+// 🧭 RUTAS ADMIN
 // ==========================================
 app.get("/api/admin/users", authenticateToken, verifyAdmin, async (req, res) => {
   try {
@@ -333,7 +328,7 @@ app.get("/api/admin/users", authenticateToken, verifyAdmin, async (req, res) => 
 });
 
 // ==========================================
-// 📊 DASHBOARD + ACTIVACIÓN SISTEMA
+// 📊 DASHBOARD
 // ==========================================
 app.get("/api/dashboard/summary", async (req, res) => {
   try {
@@ -389,11 +384,14 @@ const updateExistingUsers = async () => {
       { lastLogin: { $exists: false } },
       { $set: { lastLogin: new Date() } }
     );
+    const resultOnline = await User.updateMany(
+      { isOnline: { $exists: false } },
+      { $set: { isOnline: false } }
+    );
 
     console.log(`✅ Usuarios actualizados - role: ${resultRole.modifiedCount}`);
-    console.log(
-      `✅ Usuarios actualizados - lastLogin: ${resultLogin.modifiedCount}`
-    );
+    console.log(`✅ Usuarios actualizados - lastLogin: ${resultLogin.modifiedCount}`);
+    console.log(`✅ Usuarios actualizados - isOnline: ${resultOnline.modifiedCount}`);
   } catch (error) {
     console.error("❌ Error actualizando usuarios:", error);
   }
