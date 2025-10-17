@@ -4,11 +4,13 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { GoogleGenerativeAI } from "@google/generative-ai"; // ✅ Import añadido
+import { GoogleGenerativeAI } from "@google/generative-ai"; // ✅ Import IA
 
 dotenv.config();
 
-// Inicializar Express
+// ==========================================
+// 🚀 INICIALIZAR EXPRESS
+// ==========================================
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -288,18 +290,6 @@ app.get("/api/alerts", async (req, res) => {
 });
 
 // ==========================================
-// 🧭 RUTAS ADMIN
-// ==========================================
-app.get("/api/admin/users", authenticateToken, verifyAdmin, async (req, res) => {
-  try {
-    const users = await User.find().select("-password");
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ message: "Error al listar usuarios", error });
-  }
-});
-
-// ==========================================
 // 🤖 CHAT IA CONTRA INCENDIOS (Gemini)
 // ==========================================
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
@@ -307,9 +297,7 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 app.post("/api/chat", async (req, res) => {
   try {
     const { message } = req.body;
-    if (!message) {
-      return res.status(400).json({ error: "Mensaje requerido" });
-    }
+    if (!message) return res.status(400).json({ error: "Mensaje requerido" });
 
     const texto = message.toLowerCase();
     const emergencia =
@@ -334,11 +322,21 @@ app.post("/api/chat", async (req, res) => {
     const prompt = `
 Eres FireGuard IA, un asistente especializado en prevención y manejo de incendios.
 Debes responder SIEMPRE en español con recomendaciones claras y seguras.
+No uses Markdown, ni símbolos como **, *, _, # o backticks.
 El usuario dice: "${message}"
 `;
 
     const result = await model.generateContent(prompt);
-    const respuesta = result.response.text();
+    let respuesta = result.response.text();
+
+    // 🧹 Limpieza de formato Markdown o símbolos
+    respuesta = respuesta
+      .replace(/\*\*/g, "")
+      .replace(/\*/g, "")
+      .replace(/`/g, "")
+      .replace(/#+/g, "")
+      .replace(/_/g, "")
+      .trim();
 
     res.json({
       reply: respuesta,
