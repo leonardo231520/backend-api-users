@@ -290,7 +290,7 @@ app.get("/api/alerts", async (req, res) => {
 });
 
 // ==========================================
-// 🤖 CHAT IA CONTRA INCENDIOS (Gemini)
+// 🤖 CHAT IA CONTRA INCENDIOS (Gemini) — SIN CREAR ALERTAS
 // ==========================================
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
@@ -299,48 +299,30 @@ app.post("/api/chat", async (req, res) => {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: "Mensaje requerido" });
 
-    const texto = message.toLowerCase();
-    const emergencia =
-      texto.includes("fuego") ||
-      texto.includes("incendio") ||
-      texto.includes("humo") ||
-      texto.includes("explosión") ||
-      texto.includes("alarma") ||
-      texto.includes("gas");
-
-    if (emergencia) {
-      const nuevaAlerta = new Alert({
-        message: "🚨 Posible emergencia detectada por el agente IA (Gemini)",
-        flame: 0,
-        gas: 0,
-      });
-      await nuevaAlerta.save();
-    }
-
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const prompt = `
 Eres FireGuard IA, un asistente especializado en prevención y manejo de incendios.
-Debes responder SIEMPRE en español con recomendaciones claras y seguras.
-No uses Markdown, ni símbolos como **, *, _, # o backticks.
+Responde SIEMPRE en español con recomendaciones claras y seguras.
+Evita usar símbolos o formato Markdown (**,* ,_,# o backticks).
 El usuario dice: "${message}"
 `;
 
     const result = await model.generateContent(prompt);
     let respuesta = result.response.text();
 
-    // 🧹 Limpieza de formato Markdown o símbolos
+    // 🧹 Limpieza del texto
     respuesta = respuesta
       .replace(/\*\*/g, "")
       .replace(/\*/g, "")
       .replace(/`/g, "")
       .replace(/#+/g, "")
       .replace(/_/g, "")
+      .replace(/[-•]/g, "")
       .trim();
 
     res.json({
       reply: respuesta,
-      emergenciaDetectada: emergencia,
     });
   } catch (error) {
     console.error("Error en /api/chat:", error);
