@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { GoogleGenerativeAI } from "@google/generative-ai"; // ✅ Import añadido
 
 dotenv.config();
 
@@ -66,17 +67,16 @@ const authenticateToken = (req, res, next) => {
   jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
     if (err) return res.status(403).json({ message: "Token inválido" });
     req.user = user;
-
-    // 🕓 Actualiza última actividad
     await User.findByIdAndUpdate(user.id, { lastLogin: new Date() });
-
     next();
   });
 };
 
 const verifyAdmin = (req, res, next) => {
   if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Acceso denegado: solo administradores" });
+    return res
+      .status(403)
+      .json({ message: "Acceso denegado: solo administradores" });
   }
   next();
 };
@@ -88,7 +88,8 @@ app.post("/auth/register", async (req, res) => {
   try {
     const { email, password, name, lastname, role } = req.body;
     const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ message: "El usuario ya existe" });
+    if (existingUser)
+      return res.status(400).json({ message: "El usuario ya existe" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -116,9 +117,9 @@ app.post("/auth/login", async (req, res) => {
     if (!user) return res.status(400).json({ message: "Usuario no encontrado" });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Contraseña incorrecta" });
+    if (!isMatch)
+      return res.status(400).json({ message: "Contraseña incorrecta" });
 
-    // ✅ Activar estado online solo al iniciar sesión
     user.lastLogin = new Date();
     user.isOnline = true;
     await user.save();
@@ -126,7 +127,7 @@ app.post("/auth/login", async (req, res) => {
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" } // el token dura 1 día
+      { expiresIn: "1d" }
     );
 
     res.json({
@@ -145,7 +146,6 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
-// ✅ Cierre de sesión
 app.post("/auth/logout", authenticateToken, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user.id, { isOnline: false });
@@ -161,7 +161,8 @@ app.post("/auth/logout", authenticateToken, async (req, res) => {
 app.get("/api/users/me", authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
+    if (!user)
+      return res.status(404).json({ message: "Usuario no encontrado" });
     res.json(user);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener usuario", error });
@@ -175,41 +176,51 @@ app.get("/api/users/connected", authenticateToken, async (req, res) => {
       .limit(20);
     res.json(connectedUsers);
   } catch (error) {
-    res.status(500).json({ message: "Error al obtener usuarios conectados", error });
+    res
+      .status(500)
+      .json({ message: "Error al obtener usuarios conectados", error });
   }
 });
 
 // ==========================================
 // 🆕 CAMBIO DE ROL
 // ==========================================
-app.put("/api/users/change-role/:id", authenticateToken, verifyAdmin, async (req, res) => {
-  try {
-    const { role } = req.body;
-    if (!["admin", "user"].includes(role))
-      return res.status(400).json({ message: "Rol inválido" });
+app.put(
+  "/api/users/change-role/:id",
+  authenticateToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { role } = req.body;
+      if (!["admin", "user"].includes(role))
+        return res.status(400).json({ message: "Rol inválido" });
 
-    if (req.user.id === req.params.id)
-      return res.status(403).json({ message: "No puedes cambiar tu propio rol" });
+      if (req.user.id === req.params.id)
+        return res
+          .status(403)
+          .json({ message: "No puedes cambiar tu propio rol" });
 
-    const userToUpdate = await User.findById(req.params.id);
-    if (!userToUpdate) return res.status(404).json({ message: "Usuario no encontrado" });
+      const userToUpdate = await User.findById(req.params.id);
+      if (!userToUpdate)
+        return res.status(404).json({ message: "Usuario no encontrado" });
 
-    userToUpdate.role = role;
-    await userToUpdate.save();
+      userToUpdate.role = role;
+      await userToUpdate.save();
 
-    res.json({
-      message: `Rol cambiado correctamente a ${role}`,
-      user: {
-        id: userToUpdate._id,
-        email: userToUpdate.email,
-        name: userToUpdate.name,
-        role: userToUpdate.role,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Error al cambiar rol", error });
+      res.json({
+        message: `Rol cambiado correctamente a ${role}`,
+        user: {
+          id: userToUpdate._id,
+          email: userToUpdate.email,
+          name: userToUpdate.name,
+          role: userToUpdate.role,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Error al cambiar rol", error });
+    }
   }
-});
+);
 
 // ==========================================
 // 📡 SENSORES Y ALERTAS
@@ -218,7 +229,9 @@ app.get("/api/sensors", async (req, res) => {
   try {
     const sensors = await Sensor.find().sort({ timestamp: -1 }).limit(50);
     if (!sensors.length)
-      return res.status(404).json({ message: "No se encontraron datos de sensores" });
+      return res
+        .status(404)
+        .json({ message: "No se encontraron datos de sensores" });
 
     const formatted = sensors.map((s) => ({
       id: s._id.toString(),
@@ -243,7 +256,9 @@ app.post("/api/sensors", async (req, res) => {
   try {
     const { flame, gas } = req.body;
     if (typeof flame !== "number" || typeof gas !== "number")
-      return res.status(400).json({ message: "flame y gas deben ser números" });
+      return res
+        .status(400)
+        .json({ message: "flame y gas deben ser números" });
 
     const newSensor = new Sensor({ flame, gas });
     await newSensor.save();
@@ -285,11 +300,62 @@ app.get("/api/admin/users", authenticateToken, verifyAdmin, async (req, res) => 
 });
 
 // ==========================================
+// 🤖 CHAT IA CONTRA INCENDIOS (Gemini)
+// ==========================================
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+
+app.post("/api/chat", async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: "Mensaje requerido" });
+    }
+
+    const texto = message.toLowerCase();
+    const emergencia =
+      texto.includes("fuego") ||
+      texto.includes("incendio") ||
+      texto.includes("humo") ||
+      texto.includes("explosión") ||
+      texto.includes("alarma") ||
+      texto.includes("gas");
+
+    if (emergencia) {
+      const nuevaAlerta = new Alert({
+        message: "🚨 Posible emergencia detectada por el agente IA (Gemini)",
+        flame: 0,
+        gas: 0,
+      });
+      await nuevaAlerta.save();
+    }
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    const prompt = `
+Eres FireGuard IA, un asistente especializado en prevención y manejo de incendios.
+Debes responder SIEMPRE en español con recomendaciones claras y seguras.
+El usuario dice: "${message}"
+`;
+
+    const result = await model.generateContent(prompt);
+    const respuesta = result.response.text();
+
+    res.json({
+      reply: respuesta,
+      emergenciaDetectada: emergencia,
+    });
+  } catch (error) {
+    console.error("Error en /api/chat:", error);
+    res.status(500).json({ error: "Error al procesar el mensaje" });
+  }
+});
+
+// ==========================================
 // 🕒 Verificación automática de inactividad
 // ==========================================
 setInterval(async () => {
   try {
-    const limiteInactividad = 30 * 60 * 1000; // 30 minutos
+    const limiteInactividad = 30 * 60 * 1000;
     const ahora = new Date();
 
     const usuariosInactivos = await User.updateMany(
@@ -303,10 +369,12 @@ setInterval(async () => {
   } catch (err) {
     console.error("❌ Error al actualizar usuarios inactivos:", err);
   }
-}, 10 * 60 * 1000); // cada 10 minutos
+}, 10 * 60 * 1000);
 
 // ==========================================
 // 🚀 SERVIDOR
 // ==========================================
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`)
+);
