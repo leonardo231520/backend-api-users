@@ -4,27 +4,29 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { GoogleGenerativeAI } from "@google/generative-ai"; // ✅ Import IA
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Server } from "socket.io"; // AÑADIDO
+import http from "http"; // AÑADIDO
 
 dotenv.config();
 
 // ==========================================
-// 🚀 INICIALIZAR EXPRESS
+// INICIALIZAR EXPRESS
 // ==========================================
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 // ==========================================
-// 🔗 CONEXIÓN A MONGO
+// CONEXIÓN A MONGO
 // ==========================================
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB conectado"))
-  .catch((err) => console.error("❌ Error MongoDB:", err));
+  .then(() => console.log("MongoDB conectado"))
+  .catch((err) => console.error("Error MongoDB:", err));
 
 // ==========================================
-// 🧱 MODELOS
+// MODELOS
 // ==========================================
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
@@ -59,19 +61,27 @@ const systemStateSchema = new mongoose.Schema({
 const SystemState = mongoose.model("SystemState", systemStateSchema);
 
 // ==========================================
-// 🧩 MIDDLEWARES
+// MIDDLEWARES
 // ==========================================
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ message: "Token requerido" });
+const authenticateToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers["authorization"];
+    if (!authHeader)
+      return res.status(401).json({ message: "Token requerido" });
 
-  jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
-    if (err) return res.status(403).json({ message: "Token inválido" });
-    req.user = user;
-    await User.findByIdAndUpdate(user.id, { lastLogin: new Date() });
+    const token = authHeader.split(" ")[1];
+    if (!token) return res.status(401).json({ message: "Token inválido" });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+
+    await User.findByIdAndUpdate(decoded.id, { lastLogin: new Date() });
+
     next();
-  });
+  } catch (err) {
+    console.error("Error en authenticateToken:", err);
+    return res.status(403).json({ message: "Token inválido o expirado" });
+  }
 };
 
 const verifyAdmin = (req, res, next) => {
@@ -84,7 +94,7 @@ const verifyAdmin = (req, res, next) => {
 };
 
 // ==========================================
-// 🔐 AUTENTICACIÓN
+// AUTENTICACIÓN
 // ==========================================
 app.post("/auth/register", async (req, res) => {
   try {
@@ -127,7 +137,7 @@ app.post("/auth/login", async (req, res) => {
     await user.save();
 
     const token = jwt.sign(
-      { id: user._id, role: user.role },
+      { id: user._id.toString(), role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
@@ -158,7 +168,7 @@ app.post("/auth/logout", authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// 👤 USUARIOS
+// USUARIOS
 // ==========================================
 app.get("/api/users/me", authenticateToken, async (req, res) => {
   try {
@@ -185,7 +195,7 @@ app.get("/api/users/connected", authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// 🆕 CAMBIO DE ROL
+// CAMBIO DE ROL
 // ==========================================
 app.put(
   "/api/users/change-role/:id",
@@ -225,7 +235,7 @@ app.put(
 );
 
 // ==========================================
-// 📡 SENSORES Y ALERTAS
+// SENSORES Y ALERTAS
 // ==========================================
 app.get("/api/sensors", async (req, res) => {
   try {
@@ -266,12 +276,23 @@ app.post("/api/sensors", async (req, res) => {
     await newSensor.save();
 
     if (gas > 70 || flame > 65) {
-      const newAlert = new Alert({
-        message: "⚠️ Nivel de peligro detectado",
-        flame,
-        gas,
-      });
+      const alertMessage = `Nivel crítico: Gas ${gas} ppm, Flama ${flame}`;
+      
+      const newAlert = new Alert({ message: alertMessage, flame, gas });
       await newAlert.save();
+
+      // DISPARAR ALERTA GLOBAL POR SENSOR
+      if (!global.alarmActive) {
+        global.alarmActive = true;
+        io.emit("smoke-alert", {
+          message: alertMessage,
+          confidence: 1.0,
+          type: "sensor",
+          source: "hardware",
+          timestamp: new Date().toISOString()
+        });
+        setTimeout(() => { global.alarmActive = false; }, 30000);
+      }
     }
 
     res.status(201).json({ message: "Sensor guardado correctamente" });
@@ -290,7 +311,55 @@ app.get("/api/alerts", async (req, res) => {
 });
 
 // ==========================================
-// 🤖 CHAT IA CONTRA INCENDIOS (Gemini) — SIN CREAR ALERTAS
+// NUEVA RUTA: DISPARAR ALERTA GLOBAL
+// ==========================================
+app.post("/api/trigger-alarm", async (req, res) => {
+  try {
+    const { message, confidence = 0.9, type = "camera", source = "app" } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: "Falta mensaje" });
+    }
+
+    if (global.alarmActive) {
+      return res.json({ success: true, message: "Alarma ya activa" });
+    }
+
+    global.alarmActive = true;
+    console.log(`ALERTA GLOBAL: ${message} (${(confidence * 100).toFixed(1)}%)`);
+
+    io.emit("smoke-alert", {
+      message,
+      confidence,
+      type,
+      source,
+      timestamp: new Date().toISOString(),
+      totalClients: io.engine.clientsCount
+    });
+
+    // Guardar en BD
+    try {
+      const newAlert = new Alert({
+        message,
+        gas: type === "sensor" ? 999 : 0,
+        flame: type === "sensor" ? 999 : 0,
+      });
+      await newAlert.save();
+    } catch (e) {}
+
+    setTimeout(() => {
+      global.alarmActive = false;
+    }, 30000);
+
+    res.json({ success: true, clients: io.engine.clientsCount });
+  } catch (error) {
+    console.error("Error en /api/trigger-alarm:", error);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ==========================================
+// CHAT IA CONTRA INCENDIOS (Gemini)
 // ==========================================
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
@@ -304,26 +373,13 @@ app.post("/api/chat", async (req, res) => {
     const prompt = `
 Eres FireGuard IA, un asistente especializado en prevención y manejo de incendios.
 Responde SIEMPRE en español con recomendaciones claras y seguras.
-Evita usar símbolos o formato Markdown (**,* ,_,# o backticks).
 El usuario dice: "${message}"
 `;
 
     const result = await model.generateContent(prompt);
-    let respuesta = result.response.text();
+    let respuesta = result.response.text().replace(/\*/g, "").trim();
 
-    // 🧹 Limpieza del texto
-    respuesta = respuesta
-      .replace(/\*\*/g, "")
-      .replace(/\*/g, "")
-      .replace(/`/g, "")
-      .replace(/#+/g, "")
-      .replace(/_/g, "")
-      .replace(/[-•]/g, "")
-      .trim();
-
-    res.json({
-      reply: respuesta,
-    });
+    res.json({ reply: respuesta });
   } catch (error) {
     console.error("Error en /api/chat:", error);
     res.status(500).json({ error: "Error al procesar el mensaje" });
@@ -331,7 +387,7 @@ El usuario dice: "${message}"
 });
 
 // ==========================================
-// 🕒 Verificación automática de inactividad
+// VERIFICACIÓN AUTOMÁTICA DE INACTIVIDAD
 // ==========================================
 setInterval(async () => {
   try {
@@ -344,17 +400,43 @@ setInterval(async () => {
     );
 
     if (usuariosInactivos.modifiedCount > 0) {
-      console.log(`🕒 ${usuariosInactivos.modifiedCount} usuarios marcados como inactivos.`);
+      console.log(`${usuariosInactivos.modifiedCount} usuarios marcados como inactivos.`);
     }
   } catch (err) {
-    console.error("❌ Error al actualizar usuarios inactivos:", err);
+    console.error("Error al actualizar usuarios inactivos:", err);
   }
 }, 10 * 60 * 1000);
 
 // ==========================================
-// 🚀 SERVIDOR
+// SERVIDOR + SOCKET.IO
 // ==========================================
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () =>
-  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`)
+const httpServer = http.createServer(app); // AÑADIDO
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+let connectedClients = 0;
+global.alarmActive = false; // AÑADIDO
+
+io.on("connection", (socket) => {
+  connectedClients++;
+  console.log(`Dispositivo conectado: ${socket.id} (${connectedClients} total)`);
+
+  if (global.alarmActive) {
+    socket.emit("smoke-alert", { message: "ALERTA ACTIVA", confidence: 0.95 });
+  }
+
+  socket.on("disconnect", () => {
+    connectedClients--;
+    console.log(`Dispositivo desconectado: ${socket.id}`);
+  });
+});
+
+httpServer.listen(PORT, () =>
+  console.log(`Servidor corriendo en http://localhost:${PORT}`)
 );
